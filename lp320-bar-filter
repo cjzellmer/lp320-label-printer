@@ -1,32 +1,30 @@
 #!/usr/bin/env python3
 """CUPS filter for HPRT LP320 thermal label printer.
 
-Converts PDF input to TSPL BAR commands and outputs to stdout.
-The LP320 uses a USB-to-parallel bridge chip (ICS Advent) that corrupts
-binary data, so we cannot use BITMAP commands. Instead we rasterize
-the PDF to a monochrome image and emit BAR commands for each horizontal
-run of black pixels.
+Converts PDF/PostScript/image input to TSPL BAR commands. The LP320 uses
+a USB-to-parallel bridge chip (ICS Advent 0FE6:811E) that corrupts binary
+data, so BITMAP commands cannot be used. Instead we rasterize input to a
+monochrome image and emit pure ASCII BAR commands for each rectangular
+black region.
 
 CUPS filter interface:
     filter job-id user title copies options [filename]
     If filename is omitted, read from stdin.
 """
 
+import datetime
+import io
 import os
-import sys
-import struct
 import subprocess
+import sys
 import tempfile
+import traceback
 
-# Add user site-packages so Pillow is found when running as root
-sys.path.insert(0, '/home/chris/.local/lib/python3.11/site-packages')
-
-from PIL import Image
+from PIL import Image, ImageChops
 
 DPI = 203
-# 4x6 label defaults (will be overridden by PPD page size)
-DEFAULT_WIDTH_MM = 101.6
-DEFAULT_HEIGHT_MM = 152.4
+DEFAULT_WIDTH_MM = 101.6   # 4 inches
+DEFAULT_HEIGHT_MM = 152.4  # 6 inches
 GAP_MM = 3
 
 
@@ -35,20 +33,30 @@ def mm_to_dots(mm):
 
 
 def parse_page_size_from_options(options_str):
-    """Extract page size from CUPS options string."""
+    """Extract page size from CUPS options string.
+
+    Handles CUPS wNNNhNNN format and macOS NNNxNNNmm format.
+    """
     width_mm = DEFAULT_WIDTH_MM
     height_mm = DEFAULT_HEIGHT_MM
 
-    # CUPS passes media size in options like "media=w100h150"
-    # or "PageSize=w100h150"
     for opt in options_str.split():
         for prefix in ('media=', 'PageSize='):
             if opt.startswith(prefix):
                 val = opt[len(prefix):]
-                # Parse wNNNhNNN format (values are in mm)
+                # CUPS format: wNNNhNNN (values in mm)
                 if val.startswith('w') and 'h' in val:
                     try:
                         parts = val[1:].split('h')
+                        width_mm = float(parts[0])
+                        height_mm = float(parts[1])
+                    except (ValueError, IndexError):
+                        pass
+                # macOS format: NNNxNNNmm
+                elif 'x' in val:
+                    try:
+                        clean = val.lower().rstrip('m')
+                        parts = clean.split('x')
                         width_mm = float(parts[0])
                         height_mm = float(parts[1])
                     except (ValueError, IndexError):
@@ -57,18 +65,18 @@ def parse_page_size_from_options(options_str):
 
 
 def parse_darkness_from_options(options_str):
-    """Extract print darkness setting."""
+    """Extract print darkness setting (range 5-15)."""
     for opt in options_str.split():
         if opt.startswith('PrintDarkness='):
             try:
                 return int(opt.split('=')[1])
             except (ValueError, IndexError):
                 pass
-    return 8  # default
+    return 12
 
 
 def parse_speed_from_options(options_str):
-    """Extract print speed setting."""
+    """Extract print speed setting (range 2-6 in/sec)."""
     for opt in options_str.split():
         if opt.startswith('PrintSpeed='):
             try:
@@ -77,7 +85,7 @@ def parse_speed_from_options(options_str):
                     return int(val)
             except (ValueError, IndexError):
                 pass
-    return 4  # default
+    return 4
 
 
 def _rasterize_pdf(pdf_path, width_dots, height_dots):
@@ -105,7 +113,7 @@ def _rasterize_pdf(pdf_path, width_dots, height_dots):
 
 
 def _rasterize_ps(ps_path, width_dots, height_dots):
-    """Rasterize PostScript directly to grayscale PIL Image using Ghostscript."""
+    """Rasterize PostScript to grayscale PIL Image using Ghostscript."""
     with tempfile.TemporaryDirectory() as tmpdir:
         out_path = os.path.join(tmpdir, 'page.png')
         subprocess.run([
@@ -124,50 +132,40 @@ def _rasterize_ps(ps_path, width_dots, height_dots):
 
 
 def file_to_image(file_path, width_dots, height_dots):
-    """Convert PDF or image file to monochrome PIL Image.
+    """Convert input file to a monochrome PIL Image at label dimensions.
 
-    For PDFs: uses pdftoppm for rasterization.
-    For images (PNG/JPEG/etc): opens directly with Pillow.
-    Uses grayscale + hard threshold (no dithering) for clean BAR merging.
+    Supports PDF, PostScript, and image files (PNG, JPEG, etc.).
+    Uses grayscale rasterization with hard threshold for clean BAR merging.
     """
-    # Detect file format from header
     with open(file_path, 'rb') as f:
         header = f.read(16)
 
     img = None
 
-    # PostScript: rasterize directly with Ghostscript (no double conversion)
     if header.startswith(b'%!') and not header.startswith(b'%PDF'):
-        sys.stderr.write("INFO: PostScript detected, rasterizing directly with Ghostscript...\n")
+        sys.stderr.write("INFO: PostScript input, rasterizing with Ghostscript\n")
         img = _rasterize_ps(file_path, width_dots, height_dots)
-
-    # PDF: rasterize directly
     elif header.startswith(b'%PDF'):
-        sys.stderr.write("INFO: PDF detected, rasterizing...\n")
+        sys.stderr.write("INFO: PDF input, rasterizing with pdftoppm\n")
         img = _rasterize_pdf(file_path, width_dots, height_dots)
 
-    # Image: open directly
     if img is None:
         try:
             img = Image.open(file_path)
             img.load()
             img = img.convert('L')
-            sys.stderr.write(f"INFO: Opened as image: {img.size}\n")
+            sys.stderr.write(f"INFO: Image input: {img.size}\n")
         except Exception:
-            # Last resort: assume PDF
-            sys.stderr.write("INFO: Unknown format, trying as PDF...\n")
+            sys.stderr.write("INFO: Unknown format, trying as PDF\n")
             img = _rasterize_pdf(file_path, width_dots, height_dots)
 
     # Auto-crop whitespace margins from the source image
-    # Invert so white=0, find bounding box of non-zero (content) pixels
-    from PIL import ImageChops
     inverted = ImageChops.invert(img)
     bbox = inverted.getbbox()
     if bbox:
         img = img.crop(bbox)
-        sys.stderr.write(f"INFO: Auto-cropped to {img.size} (removed margins)\n")
 
-    # Resize to fill label (maintain aspect ratio, fit within bounds)
+    # Scale to fill label (maintain aspect ratio)
     img_w, img_h = img.size
     scale = min(width_dots / img_w, height_dots / img_h)
     new_w = int(img_w * scale)
@@ -175,80 +173,69 @@ def file_to_image(file_path, width_dots, height_dots):
     if (new_w, new_h) != (img_w, img_h):
         img = img.resize((new_w, new_h), Image.LANCZOS)
 
-    # Place on white canvas at exact label size, centered
+    # Center on white canvas at exact label dimensions
     canvas = Image.new('L', (width_dots, height_dots), 255)
     paste_x = (width_dots - img.size[0]) // 2
     paste_y = (height_dots - img.size[1]) // 2
     canvas.paste(img, (paste_x, paste_y))
 
     # Hard threshold: < 128 = black (0), >= 128 = white (255)
-    mono = canvas.point(lambda p: 0 if p < 128 else 255, mode='1')
-
-    return mono
+    return canvas.point(lambda p: 0 if p < 128 else 255, mode='1')
 
 
 def image_to_bar_commands(img):
     """Convert monochrome image to TSPL BAR commands.
 
-    Scans each row for contiguous runs of black pixels.
-    Merges identical runs across consecutive rows to reduce command count.
+    Scans each row for contiguous runs of black pixels, then merges
+    identical runs across consecutive rows into rectangles to minimize
+    the number of commands.
 
-    In PIL mode '1': 0=black, 255(or 1 in getpixel)=white
+    In PIL mode '1': pixel value 0 = black.
     """
     width, height = img.size
     pixels = img.load()
     commands = []
 
-    # Track active runs for merging across rows
-    # Key: (x_start, width) -> (y_start, current_height)
+    # Track active runs for vertical merging
+    # Key: (x_start, run_width) -> (y_start, rect_height)
     active_runs = {}
 
     for y in range(height):
-        # Find all black runs in this row
         row_runs = set()
         x = 0
         while x < width:
-            # Skip white pixels (value != 0 means white in mode '1')
             if pixels[x, y] != 0:
                 x += 1
                 continue
-            # Found black pixel, find end of run
             x_start = x
             while x < width and pixels[x, y] == 0:
                 x += 1
-            run_width = x - x_start
-            row_runs.add((x_start, run_width))
+            row_runs.add((x_start, x - x_start))
 
-        # Flush active runs that are NOT in this row
-        finished = set(active_runs.keys()) - row_runs
-        for key in finished:
+        # Flush runs that ended (not in this row)
+        for key in set(active_runs.keys()) - row_runs:
             y_start, h = active_runs.pop(key)
-            x_start, w = key
-            commands.append(f"BAR {x_start},{y_start},{w},{h}")
+            commands.append(f"BAR {key[0]},{y_start},{key[1]},{h}")
 
-        # Extend active runs that ARE in this row
-        continuing = set(active_runs.keys()) & row_runs
-        for key in continuing:
+        # Extend continuing runs
+        for key in set(active_runs.keys()) & row_runs:
             y_start, h = active_runs[key]
             active_runs[key] = (y_start, h + 1)
 
         # Start new runs
-        new_runs = row_runs - set(active_runs.keys())
-        for key in new_runs:
+        for key in row_runs - set(active_runs.keys()):
             active_runs[key] = (y, 1)
 
-    # Flush remaining active runs
-    for key, (y_start, h) in active_runs.items():
-        x_start, w = key
+    # Flush remaining runs
+    for (x_start, w), (y_start, h) in active_runs.items():
         commands.append(f"BAR {x_start},{y_start},{w},{h}")
 
     return commands
 
 
 def main():
-    # CUPS filter args: job-id user title copies options [filename]
     if len(sys.argv) < 6:
-        sys.stderr.write("ERROR: Usage: filter job-id user title copies options [filename]\n")
+        sys.stderr.write("Usage: lp320-bar-filter job-id user title copies options [filename]\n")
         sys.exit(1)
 
     job_id = sys.argv[1]
@@ -258,27 +245,15 @@ def main():
     options = sys.argv[5]
     input_file = sys.argv[6] if len(sys.argv) > 6 else None
 
-    # Log to our own file since CUPS logs are unreliable
     logfile = open('/tmp/lp320-filter.log', 'a')
-    import datetime
+
     def log(msg):
         logfile.write(f"{datetime.datetime.now()} {msg}\n")
         logfile.flush()
         sys.stderr.write(f"INFO: {msg}\n")
 
-    log(f"=== Job {job_id} for {user} ===")
-    log(f"Title: {title}")
-    log(f"Options: {options}")
-    log(f"Input file: {input_file}")
-    if input_file:
-        log(f"Input file size: {os.path.getsize(input_file)} bytes")
-        # Log first few bytes to identify format
-        with open(input_file, 'rb') as f:
-            header = f.read(32)
-            log(f"File header: {header[:16]}")
-    log(f"CONTENT_TYPE env: {os.environ.get('CONTENT_TYPE', 'not set')}")
+    log(f"Job {job_id}: {title} for {user}")
 
-    # Parse settings from options
     width_mm, height_mm = parse_page_size_from_options(options)
     darkness = parse_darkness_from_options(options)
     speed = parse_speed_from_options(options)
@@ -286,71 +261,59 @@ def main():
     width_dots = mm_to_dots(width_mm)
     height_dots = mm_to_dots(height_mm)
 
-    log(f"Page size: {width_mm}x{height_mm}mm = {width_dots}x{height_dots} dots")
+    log(f"Label: {width_mm}x{height_mm}mm ({width_dots}x{height_dots} dots), "
+        f"darkness={darkness}, speed={speed}")
 
-    # If no filename, read from stdin to a temp file
     if input_file is None:
-        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix='.dat', delete=False) as tmp:
             data = sys.stdin.buffer.read()
             tmp.write(data)
             input_file = tmp.name
             cleanup_input = True
-            log(f"Read {len(data)} bytes from stdin, saved to {input_file}")
-            log(f"Stdin header: {data[:16]}")
+            log(f"Read {len(data)} bytes from stdin")
     else:
         cleanup_input = False
 
     try:
-        # Convert PDF to monochrome image
-        log("Rasterizing...")
         img = file_to_image(input_file, width_dots, height_dots)
-        log(f"Image size: {img.size}")
+        log(f"Rasterized: {img.size}")
 
-        # Save debug image per job
-        debug_path = f'/tmp/lp320-debug-job{job_id}.png'
-        img.save(debug_path)
-        log(f"Saved debug image to {debug_path}")
-
-        # Auto-detect inverted image: if more than 50% black, invert it
+        # Auto-detect inverted images (>50% black = probably inverted)
         pixels = img.load()
         w, h = img.size
-        black_count = sum(1 for y in range(0, h, 10) for x in range(0, w, 10) if pixels[x, y] == 0)
+        black_count = sum(
+            1 for y in range(0, h, 10) for x in range(0, w, 10)
+            if pixels[x, y] == 0
+        )
         total_sampled = (w // 10) * (h // 10)
-        black_pct = black_count / total_sampled * 100 if total_sampled > 0 else 0
-        log(f"Black pixels: {black_pct:.1f}% (sampled)")
-        if black_pct > 50:
-            log("Image appears inverted — flipping black/white")
-            from PIL import ImageChops
+        if total_sampled > 0 and black_count / total_sampled > 0.5:
+            log("Image appears inverted, flipping")
             img = ImageChops.invert(img)
-            img.save(f'/tmp/lp320-debug-job{job_id}-fixed.png')
 
-        # Convert to BAR commands
-        log("Converting to BAR commands...")
         bar_commands = image_to_bar_commands(img)
         log(f"Generated {len(bar_commands)} BAR commands")
 
         # Build TSPL output
-        output = []
-        output.append(f"SIZE {width_mm} mm, {height_mm} mm")
-        output.append(f"GAP {GAP_MM} mm, 0 mm")
-        output.append(f"SPEED {speed}")
-        output.append(f"DENSITY {darkness}")
-        output.append("DIRECTION 1")
-        output.append("CLS")
+        output = [
+            f"SIZE {width_mm} mm, {height_mm} mm",
+            f"GAP {GAP_MM} mm, 0 mm",
+            f"SPEED {speed}",
+            f"DENSITY {darkness}",
+            "DIRECTION 1",
+            "CLS",
+        ]
         output.extend(bar_commands)
         output.append(f"PRINT {copies}")
-        output.append("")  # trailing newline
+        output.append("")
 
-        # Write to stdout with CRLF line endings
         tspl_data = "\r\n".join(output)
         sys.stdout.buffer.write(tspl_data.encode('ascii'))
         sys.stdout.buffer.flush()
 
-        log(f"Done - {len(tspl_data)} bytes output")
+        log(f"Done: {len(tspl_data)} bytes, {len(bar_commands)} BAR commands")
 
     except Exception as e:
         log(f"ERROR: {e}")
-        import traceback
         log(traceback.format_exc())
         raise
 
@@ -361,31 +324,28 @@ def main():
 
 
 def test_direct(file_path, device='/dev/usb/lp0'):
-    """Send a file directly to the printer, bypassing CUPS. For testing."""
-    sys.stderr.write(f"INFO: Direct print test: {file_path} -> {device}\n")
-    # Fake CUPS args
+    """Send a file directly to the printer, bypassing CUPS."""
     sys.argv = ['lp320-bar-filter', '0', 'test', 'test', '1',
-                'media=w100h150 PrintDarkness=8', file_path]
-    # Capture output
-    import io
+                'media=w100h150 PrintDarkness=12', file_path]
+
     old_stdout = sys.stdout
-    sys.stdout = io.TextIOWrapper(io.BytesIO(), encoding='ascii')
+    buf = io.BytesIO()
+    sys.stdout = io.TextIOWrapper(buf, encoding='ascii')
 
     main()
 
-    sys.stdout.buffer.seek(0)
-    data = sys.stdout.buffer.read()
+    buf.seek(0)
+    data = buf.read()
     sys.stdout = old_stdout
 
-    sys.stderr.write(f"INFO: Writing {len(data)} bytes to {device}\n")
+    sys.stderr.write(f"Writing {len(data)} bytes to {device}\n")
     with open(device, 'wb') as f:
         f.write(data)
-    sys.stderr.write("INFO: Done.\n")
+    sys.stderr.write("Done.\n")
 
 
 if __name__ == '__main__':
     if len(sys.argv) >= 2 and sys.argv[1] == '--test-direct':
-        # Usage: lp320-bar-filter --test-direct <file> [device]
         if len(sys.argv) < 3:
             print("Usage: lp320-bar-filter --test-direct <file> [/dev/usb/lp0]")
             sys.exit(1)

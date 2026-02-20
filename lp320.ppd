@@ -85,15 +85,15 @@
 
 *OpenUI *PrintDarkness/Print Darkness: PickOne
 *OrderDependency: 320 AnySetup *PrintDarkness
-*DefaultPrintDarkness: 8
+*DefaultPrintDarkness: 12
 *PrintDarkness 5/5: ""
 *PrintDarkness 6/6: ""
 *PrintDarkness 7/7: ""
-*PrintDarkness 8/8 (Default): ""
+*PrintDarkness 8/8: ""
 *PrintDarkness 9/9: ""
 *PrintDarkness 10/10: ""
 *PrintDarkness 11/11: ""
-*PrintDarkness 12/12: ""
+*PrintDarkness 12/12 (Default): ""
 *PrintDarkness 13/13: ""
 *PrintDarkness 14/14: ""
 *PrintDarkness 15/15 (Max): ""

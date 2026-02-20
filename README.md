@@ -38,7 +38,7 @@ sudo pip3 install --break-system-packages Pillow
 ## Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/lp320-label-printer.git
+git clone https://github.com/cjzellmer/lp320-label-printer.git
 cd lp320-label-printer
 ./install.sh
 ```
