@@ -1,0 +1,115 @@
+*PPD-Adobe: "4.3"
+*%%%% PPD file for HPRT LP320 with CUPS.
+*%%%% Uses BAR-command rasterization (no BITMAP) for USB-parallel bridge compatibility.
+*FormatVersion: "4.3"
+*FileVersion: "1.0.0"
+*LanguageVersion: English
+*LanguageEncoding: ISOLatin1
+*PCFileName: "lp320.ppd"
+*Product: "(LP320)"
+*Manufacturer: "HPRT"
+*ModelName: "LP320"
+*ShortNickName: "LP320"
+*NickName: "HPRT LP320 Thermal Label Printer"
+*PSVersion: "(3010.000) 0"
+*LanguageLevel: "3"
+*ColorDevice: False
+*DefaultColorSpace: Gray
+*FileSystem: False
+*Throughput: "1"
+*LandscapeOrientation: Plus90
+*TTRasterizer: Type42
+*cupsVersion: 2.4
+*cupsModelNumber: 20
+*cupsManualCopies: True
+*cupsFilter: "application/pdf 0 lp320-bar-filter"
+*cupsFilter: "application/postscript 0 lp320-bar-filter"
+*cupsFilter: "application/vnd.cups-postscript 0 lp320-bar-filter"
+*cupsFilter: "image/png 0 lp320-bar-filter"
+*cupsFilter: "image/jpeg 0 lp320-bar-filter"
+
+*MaxMediaWidth: "306.14"
+*MaxMediaHeight: "6480"
+*HWMargins: 0.00 0.00 0.00 0.00
+*CustomPageSize True: "pop pop pop <</PageSize[5 -2 roll]/ImagingBBox null>>setpagedevice"
+*ParamCustomPageSize Width: 1 points 14.17 306.14
+*ParamCustomPageSize Height: 2 points 14.17 6480
+*ParamCustomPageSize WidthOffset: 3 points 0 0
+*ParamCustomPageSize HeightOffset: 4 points 0 0
+*ParamCustomPageSize Orientation: 5 int 0 0
+*RequiresPageRegion All: True
+
+*OpenGroup: General/General
+*OpenUI *PageSize/Media Size: PickOne
+*OrderDependency: 10 AnySetup *PageSize
+*DefaultPageSize: w100h150
+*PageSize w100h150/4"x6" (101.6mm x 152.4mm): "<</PageSize[283 425]/ImagingBBox null>>setpagedevice"
+*PageSize w100h100/4"x4" (101.6mm x 101.6mm): "<</PageSize[283 283]/ImagingBBox null>>setpagedevice"
+*PageSize w100h75/4"x3" (101.6mm x 76.2mm): "<</PageSize[283 213]/ImagingBBox null>>setpagedevice"
+*PageSize w100h50/4"x2" (101.6mm x 50.8mm): "<</PageSize[283 142]/ImagingBBox null>>setpagedevice"
+*PageSize w100h25/4"x1" (101.6mm x 25.4mm): "<</PageSize[283 71]/ImagingBBox null>>setpagedevice"
+*CloseUI: *PageSize
+
+*OpenUI *PageRegion/Media Size: PickOne
+*OrderDependency: 10 AnySetup *PageRegion
+*DefaultPageRegion: w100h150
+*PageRegion w100h150/4"x6" (101.6mm x 152.4mm): "<</PageSize[283 425]/ImagingBBox null>>setpagedevice"
+*PageRegion w100h100/4"x4" (101.6mm x 101.6mm): "<</PageSize[283 283]/ImagingBBox null>>setpagedevice"
+*PageRegion w100h75/4"x3" (101.6mm x 76.2mm): "<</PageSize[283 213]/ImagingBBox null>>setpagedevice"
+*PageRegion w100h50/4"x2" (101.6mm x 50.8mm): "<</PageSize[283 142]/ImagingBBox null>>setpagedevice"
+*PageRegion w100h25/4"x1" (101.6mm x 25.4mm): "<</PageSize[283 71]/ImagingBBox null>>setpagedevice"
+*CloseUI: *PageRegion
+
+*DefaultImageableArea: w100h150
+*ImageableArea w100h150/4"x6" (101.6mm x 152.4mm): "0 0 283 425"
+*ImageableArea w100h100/4"x4" (101.6mm x 101.6mm): "0 0 283 283"
+*ImageableArea w100h75/4"x3" (101.6mm x 76.2mm): "0 0 283 213"
+*ImageableArea w100h50/4"x2" (101.6mm x 50.8mm): "0 0 283 142"
+*ImageableArea w100h25/4"x1" (101.6mm x 25.4mm): "0 0 283 71"
+
+*DefaultPaperDimension: w100h150
+*PaperDimension w100h150/4"x6" (101.6mm x 152.4mm): "283 425"
+*PaperDimension w100h100/4"x4" (101.6mm x 101.6mm): "283 283"
+*PaperDimension w100h75/4"x3" (101.6mm x 76.2mm): "283 213"
+*PaperDimension w100h50/4"x2" (101.6mm x 50.8mm): "283 142"
+*PaperDimension w100h25/4"x1" (101.6mm x 25.4mm): "283 71"
+*CloseGroup: General
+
+*OpenGroup: PrinterOptions/Printer Options
+
+*OpenUI *Resolution/Resolution: PickOne
+*OrderDependency: 10 AnySetup *Resolution
+*DefaultResolution: 203dpi
+*Resolution 203dpi/203 DPI: "<</HWResolution[203 203]/cupsBitsPerColor 1/cupsColorSpace 3>>setpagedevice"
+*CloseUI: *Resolution
+
+*OpenUI *PrintDarkness/Print Darkness: PickOne
+*OrderDependency: 320 AnySetup *PrintDarkness
+*DefaultPrintDarkness: 8
+*PrintDarkness 5/5: ""
+*PrintDarkness 6/6: ""
+*PrintDarkness 7/7: ""
+*PrintDarkness 8/8 (Default): ""
+*PrintDarkness 9/9: ""
+*PrintDarkness 10/10: ""
+*PrintDarkness 11/11: ""
+*PrintDarkness 12/12: ""
+*PrintDarkness 13/13: ""
+*PrintDarkness 14/14: ""
+*PrintDarkness 15/15 (Max): ""
+*CloseUI: *PrintDarkness
+
+*OpenUI *PrintSpeed/Print Speed: PickOne
+*OrderDependency: 310 AnySetup *PrintSpeed
+*DefaultPrintSpeed: 4
+*PrintSpeed 2/2 in/sec (Slow): ""
+*PrintSpeed 3/3 in/sec: ""
+*PrintSpeed 4/4 in/sec (Default): ""
+*PrintSpeed 5/5 in/sec: ""
+*PrintSpeed 6/6 in/sec (Fast): ""
+*CloseUI: *PrintSpeed
+
+*CloseGroup: PrinterOptions
+
+*DefaultFont: Courier
+*% End of lp320.ppd
