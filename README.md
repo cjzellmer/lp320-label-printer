@@ -10,13 +10,14 @@ The HPRT LP320 is a budget 4x6 thermal label printer popular for shipping labels
 
 This driver bypasses the broken `BITMAP` command entirely. Instead it:
 
-1. Receives PDF input from CUPS
-2. Rasterizes to a monochrome image at 203 DPI using `pdftoppm`
+1. Receives PDF or PostScript input from CUPS (works with any client driver)
+2. Rasterizes to a monochrome image at 203 DPI using `pdftoppm` (PDF) or Ghostscript (PostScript)
 3. Auto-crops whitespace margins from the source
-4. Scans each row for contiguous runs of black pixels
-5. Merges runs vertically into rectangles for efficiency
-6. Emits pure ASCII `BAR` commands (no binary data = no corruption through the USB bridge)
-7. Wraps in TSPL header with configurable size, speed, and darkness
+4. Adds 1/8" margins on all sides to prevent edge clipping
+5. Scans each row for contiguous runs of black pixels
+6. Merges runs vertically into rectangles for efficiency
+7. Emits pure ASCII `BAR` commands (no binary data = no corruption through the USB bridge)
+8. Wraps in TSPL header with configurable size, speed, and darkness
 
 A typical 4x6 shipping label produces ~5,000 BAR commands (~95KB) and prints in a few seconds.
 
@@ -46,17 +47,35 @@ cd lp320-label-printer
 The install script will:
 - Copy the filter to `/usr/lib/cups/filter/`
 - Auto-detect the printer's USB URI
-- Configure the CUPS printer with sensible defaults (4x6 labels, darkness 12)
+- Configure the CUPS printer with sensible defaults (4x6 labels, darkness 13, speed 3)
 - Enable network sharing so other devices can discover it
 
 ## Adding the Printer on macOS
 
-1. **System Settings → Printers & Scanners → Add Printer**
-2. Select **LP320** from the network/Bonjour list
-3. **Important:** Make sure the **"Use"** dropdown says **AirPrint** — do NOT select "Generic PostScript Printer" (this causes the Mac to convert PDFs to PostScript which produces garbled output)
+1. **System Settings → Printers & Scanners → Add Printer, Scanner, or Fax...**
+2. If LP320 appears in the Default/Bonjour list, select it. Otherwise click the **IP** tab and enter:
+   - **Protocol:** IPP
+   - **Address:** `raspberrypi.local` (or your Pi's IP)
+   - **Queue:** `printers/LP320`
+3. For the **"Use"** dropdown, any of these will work:
+   - **Secure AirPrint** or **AirPrint** — best option if available, sends PDF directly
+   - **Auto Select** — queries the Pi and picks automatically (may resolve to Generic PostScript Printer, which is fine)
+   - **Generic PostScript Printer** — works correctly; the Pi's filter handles the PostScript-to-label conversion server-side
 4. Click **Add**
 
 Then just Cmd+P from any app and select LP320.
+
+> **Note:** All print processing happens on the Pi, not the Mac. The Mac just sends the document over the network. It doesn't matter which driver the Mac selects — the Pi's filter accepts PDF, PostScript, and images and converts them all to label output correctly.
+
+## Adding the Printer on Windows
+
+1. **Settings → Bluetooth & devices → Printers & scanners → Add device**
+2. If LP320 doesn't appear automatically, click **Add manually** and select **Add a printer using an IP address or hostname**
+3. Enter:
+   - **Device type:** IPP
+   - **Hostname or IP:** `http://raspberrypi.local:631/printers/LP320`
+4. For driver, select **Microsoft IPP Class Driver**
+5. Click **Next** to finish
 
 ## Configuration
 
@@ -75,21 +94,23 @@ lpadmin -p LP320 -o media=w100h100
 lpadmin -p LP320 -o media=w100h75
 ```
 
-### Print Darkness
+### Print Darkness (Heat)
 
-Range: 5–15. Default: 12.
+Controls how much heat the print head applies. Higher = darker/bolder, but too high will overcook the label. Range: 5–15. Default: 13.
 
 ```bash
-lpadmin -p LP320 -o PrintDarkness-default=12
+lpadmin -p LP320 -o PrintDarkness-default=13
 ```
 
 ### Print Speed
 
-Range: 2–6 in/sec. Default: 4.
+How fast the label feeds through the print head, in inches per second. Slower = more contact time = darker output. Faster = lighter but quicker. Range: 2–6 in/sec. Default: 3.
 
 ```bash
-lpadmin -p LP320 -o PrintSpeed-default=4
+lpadmin -p LP320 -o PrintSpeed-default=3
 ```
+
+> **Tip:** Speed and darkness work together. If labels are too light, try lowering speed before increasing darkness — you get better results with less heat.
 
 ## How It Works
 
@@ -107,33 +128,34 @@ This driver converts the entire label image into `BAR` commands — one per rect
 ### Filter Pipeline
 
 ```
-PDF (from Mac/PC)
-  → pdftoppm (rasterize to grayscale at 203 DPI)
-  → Pillow (auto-crop margins, threshold to monochrome)
+PDF or PostScript (from Mac/PC/phone)
+  → pdftoppm or Ghostscript (rasterize to grayscale at 203 DPI)
+  → Pillow (auto-crop whitespace, scale to fit label with 1/8" margins, threshold to monochrome)
   → BAR command generator (horizontal run detection + vertical merging)
   → TSPL output (SIZE, GAP, SPEED, DENSITY, DIRECTION, CLS, BAR..., PRINT)
   → USB bridge → printer
 ```
 
-PostScript input (from some CUPS configurations) is handled via direct Ghostscript rasterization.
+The filter handles PDF (via `pdftoppm`), PostScript (via Ghostscript), and image files (PNG, JPEG, etc.) directly. PostScript input — including from macOS "Generic PostScript Printer" driver — is rasterized at the document's native page size and then auto-cropped and scaled to the label, so it produces correct output regardless of the source page size.
 
 ## Troubleshooting
 
+**"Filter failed" error in CUPS:** Check `/tmp/lp320-filter.log` for details. If the log is empty, the filter may have crashed before starting — run `sudo cupsenable LP320` to clear the error and retry.
+
 **Blank labels / form feed only:** The printer is receiving raw data with no TSPL translation. Make sure the filter is installed and the printer is configured with the PPD (not as a "Raw" printer).
 
-**Garbled / skewed output from one Mac but not another:** Check the "Use" setting in Printers & Scanners. If it says "Generic PostScript Printer", the Mac is converting to PostScript before sending. Change to AirPrint.
-
-**Labels too light:** Increase darkness: `lpadmin -p LP320 -o PrintDarkness-default=14`
+**Labels too light:** Lower the speed first (`PrintSpeed-default=2`), then increase darkness if still needed (`PrintDarkness-default=14`).
 
 **Labels too dark / all black:** Decrease darkness: `lpadmin -p LP320 -o PrintDarkness-default=8`
 
-**Margins / wasted space on labels:** The filter auto-crops whitespace. If you're still seeing margins, the source PDF might have content (like a white border with a thin outline) that prevents cropping.
-
-**Printer not found on network:** Make sure CUPS sharing and Avahi are enabled:
+**Printer not found on network from Mac:** Make sure CUPS sharing and Avahi are enabled:
 ```bash
 sudo cupsctl --share-printers
 sudo systemctl enable --now avahi-daemon
 ```
+If the printer still doesn't appear, add it manually via the IP tab (see macOS instructions above).
+
+**Mac shows wrong driver options:** It doesn't matter. The Pi handles all conversion server-side. Whether the Mac selects AirPrint, Auto Select, or Generic PostScript Printer, the output will be the same.
 
 ## Files
 

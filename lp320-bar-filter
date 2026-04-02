@@ -26,6 +26,7 @@ DPI = 203
 DEFAULT_WIDTH_MM = 101.6   # 4 inches
 DEFAULT_HEIGHT_MM = 152.4  # 6 inches
 GAP_MM = 3
+MARGIN_DOTS = int(0.125 * DPI)  # 1/8 inch margin on all sides
 
 
 def mm_to_dots(mm):
@@ -167,18 +168,20 @@ def file_to_image(file_path, width_dots, height_dots):
     if bbox:
         img = img.crop(bbox)
 
-    # Scale to fill label (maintain aspect ratio)
+    # Scale to fill printable area (label minus margins), maintain aspect ratio
+    printable_w = width_dots - 2 * MARGIN_DOTS
+    printable_h = height_dots - 2 * MARGIN_DOTS
     img_w, img_h = img.size
-    scale = min(width_dots / img_w, height_dots / img_h)
+    scale = min(printable_w / img_w, printable_h / img_h)
     new_w = int(img_w * scale)
     new_h = int(img_h * scale)
     if (new_w, new_h) != (img_w, img_h):
         img = img.resize((new_w, new_h), Image.LANCZOS)
 
-    # Center on white canvas at exact label dimensions
+    # Center on white canvas at exact label dimensions (margins are built in)
     canvas = Image.new('L', (width_dots, height_dots), 255)
-    paste_x = (width_dots - img.size[0]) // 2
-    paste_y = (height_dots - img.size[1]) // 2
+    paste_x = MARGIN_DOTS + (printable_w - img.size[0]) // 2
+    paste_y = MARGIN_DOTS + (printable_h - img.size[1]) // 2
     canvas.paste(img, (paste_x, paste_y))
 
     # Hard threshold: < 128 = black (0), >= 128 = white (255)
