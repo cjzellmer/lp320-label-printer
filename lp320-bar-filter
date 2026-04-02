@@ -113,17 +113,19 @@ def _rasterize_pdf(pdf_path, width_dots, height_dots):
 
 
 def _rasterize_ps(ps_path, width_dots, height_dots):
-    """Rasterize PostScript to grayscale PIL Image using Ghostscript."""
+    """Rasterize PostScript to grayscale PIL Image using Ghostscript.
+
+    Renders at the document's native page size so content from oversized
+    pages (e.g. Letter-sized PS from macOS "Generic PostScript Printer")
+    is captured at full resolution. The caller's auto-crop + scale logic
+    then fits the actual content to the label.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
         out_path = os.path.join(tmpdir, 'page.png')
         subprocess.run([
             'gs', '-q', '-dNOPAUSE', '-dBATCH', '-dSAFER',
             '-sDEVICE=pnggray',
             '-r' + str(DPI),
-            f'-dDEVICEWIDTHPOINTS={width_dots * 72 / DPI}',
-            f'-dDEVICEHEIGHTPOINTS={height_dots * 72 / DPI}',
-            '-dFIXEDMEDIA',
-            '-dPDFFitPage',
             '-sOutputFile=' + out_path,
             ps_path
         ], check=True, stderr=subprocess.PIPE)
@@ -245,11 +247,18 @@ def main():
     options = sys.argv[5]
     input_file = sys.argv[6] if len(sys.argv) > 6 else None
 
-    logfile = open('/tmp/lp320-filter.log', 'a')
+    try:
+        logfile = open('/tmp/lp320-filter.log', 'a')
+    except OSError:
+        logfile = None
 
     def log(msg):
-        logfile.write(f"{datetime.datetime.now()} {msg}\n")
-        logfile.flush()
+        if logfile:
+            try:
+                logfile.write(f"{datetime.datetime.now()} {msg}\n")
+                logfile.flush()
+            except OSError:
+                pass
         sys.stderr.write(f"INFO: {msg}\n")
 
     log(f"Job {job_id}: {title} for {user}")
@@ -320,7 +329,8 @@ def main():
     finally:
         if cleanup_input:
             os.unlink(input_file)
-        logfile.close()
+        if logfile:
+            logfile.close()
 
 
 def test_direct(file_path, device='/dev/usb/lp0'):
